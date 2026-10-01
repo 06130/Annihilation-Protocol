@@ -1,50 +1,65 @@
 package org.lingZero;
 
-import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraft.world.item.Item;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.event.config.ModConfigEvent;
 import net.neoforged.neoforge.common.ModConfigSpec;
 
-import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
-
-// An example config class. This is not required, but it's a good idea to have one to keep your config organized.
-// Demonstrates how to use Neo's config APIs
+/**
+ * 关卡与战斗的可调参数。数值在配置文件加载后才会写入静态字段，因此都带默认值。
+ */
 @EventBusSubscriber(modid = AnnihilationProtocolMod.MODID, bus = EventBusSubscriber.Bus.MOD)
-public class Config {
+public final class Config {
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
 
-    private static final ModConfigSpec.BooleanValue LOG_DIRT_BLOCK = BUILDER.comment("Whether to log the dirt block on common setup").define("logDirtBlock", true);
+    private static final ModConfigSpec.IntValue GATE_MAX_HP = BUILDER
+            .comment("蓝门最大生命值")
+            .defineInRange("gateMaxHp", 3, 1, 1000);
+    private static final ModConfigSpec.IntValue DEFAULT_ENEMY_COUNT = BUILDER
+            .comment("/ap start 未指定数量时生成的敌人总数")
+            .defineInRange("defaultEnemyCount", 5, 1, 500);
+    private static final ModConfigSpec.IntValue SPAWN_INTERVAL_TICKS = BUILDER
+            .comment("生成队列默认间隔（tick）")
+            .defineInRange("spawnIntervalTicks", 40, 1, 12000);
+    private static final ModConfigSpec.IntValue MAX_OPERATORS = BUILDER
+            .comment("同时存在的干员上限")
+            .defineInRange("maxOperators", 8, 1, 64);
+    private static final ModConfigSpec.IntValue DEPLOY_COOLDOWN_TICKS = BUILDER
+            .comment("同一玩家的部署冷却（tick）")
+            .defineInRange("deployCooldownTicks", 40, 0, 12000);
+    private static final ModConfigSpec.IntValue BLOCK_CHECK_INTERVAL_TICKS = BUILDER
+            .comment("阻挡检测间隔（tick）")
+            .defineInRange("blockCheckIntervalTicks", 5, 1, 100);
+    private static final ModConfigSpec.BooleanValue SHOW_HP_NAME_TAG = BUILDER
+            .comment("是否用名字牌显示干员/敌人血量")
+            .define("showHpNameTag", true);
+    private static final ModConfigSpec.BooleanValue DEBUG_LOGGING = BUILDER
+            .comment("输出关卡与网络调试日志")
+            .define("debugLogging", false);
 
-    private static final ModConfigSpec.IntValue MAGIC_NUMBER = BUILDER.comment("A magic number").defineInRange("magicNumber", 42, 0, Integer.MAX_VALUE);
+    public static final ModConfigSpec SPEC = BUILDER.build();
 
-    public static final ModConfigSpec.ConfigValue<String> MAGIC_NUMBER_INTRODUCTION = BUILDER.comment("What you want the introduction message to be for the magic number").define("magicNumberIntroduction", "The magic number is... ");
+    public static int gateMaxHp = 3;
+    public static int defaultEnemyCount = 5;
+    public static int spawnIntervalTicks = 40;
+    public static int maxOperators = 8;
+    public static int deployCooldownTicks = 40;
+    public static int blockCheckIntervalTicks = 5;
+    public static boolean showHpNameTag = true;
+    public static boolean debugLogging = false;
 
-    // a list of strings that are treated as resource locations for items
-    private static final ModConfigSpec.ConfigValue<List<? extends String>> ITEM_STRINGS = BUILDER.comment("A list of items to log on common setup.").defineListAllowEmpty("items", List.of("minecraft:iron_ingot"), Config::validateItemName);
-
-    static final ModConfigSpec SPEC = BUILDER.build();
-
-    public static boolean logDirtBlock;
-    public static int magicNumber;
-    public static String magicNumberIntroduction;
-    public static Set<Item> items;
-
-    private static boolean validateItemName(final Object obj) {
-        return obj instanceof String itemName && BuiltInRegistries.ITEM.containsKey(ResourceLocation.parse(itemName));
+    private Config() {
     }
 
     @SubscribeEvent
-    static void onLoad(final ModConfigEvent event) {
-        logDirtBlock = LOG_DIRT_BLOCK.get();
-        magicNumber = MAGIC_NUMBER.get();
-        magicNumberIntroduction = MAGIC_NUMBER_INTRODUCTION.get();
-
-        // convert the list of strings into a set of items
-        items = ITEM_STRINGS.get().stream().map(itemName -> BuiltInRegistries.ITEM.get(ResourceLocation.parse(itemName))).collect(Collectors.toSet());
+    static void onLoad(ModConfigEvent event) {
+        gateMaxHp = GATE_MAX_HP.get();
+        defaultEnemyCount = DEFAULT_ENEMY_COUNT.get();
+        spawnIntervalTicks = SPAWN_INTERVAL_TICKS.get();
+        maxOperators = MAX_OPERATORS.get();
+        deployCooldownTicks = DEPLOY_COOLDOWN_TICKS.get();
+        blockCheckIntervalTicks = BLOCK_CHECK_INTERVAL_TICKS.get();
+        showHpNameTag = SHOW_HP_NAME_TAG.get();
+        debugLogging = DEBUG_LOGGING.get();
     }
 }
