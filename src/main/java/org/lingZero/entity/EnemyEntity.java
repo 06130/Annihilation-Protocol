@@ -20,6 +20,7 @@ import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
+import org.lingZero.AnnihilationProtocolMod;
 import org.lingZero.Config;
 import software.bernie.geckolib.animatable.GeoEntity;
 import software.bernie.geckolib.animatable.instance.AnimatableInstanceCache;
@@ -35,7 +36,6 @@ import software.bernie.geckolib.util.GeckoLibUtil;
 public class EnemyEntity extends Mob implements GeoEntity {
     private static final EntityDataAccessor<String> DATA_DEF_ID = SynchedEntityData.defineId(EnemyEntity.class, EntityDataSerializers.STRING);
     private static final EntityDataAccessor<Integer> DATA_ANIM_STATE = SynchedEntityData.defineId(EnemyEntity.class, EntityDataSerializers.INT);
-    private static final EntityDataAccessor<Integer> DATA_BLOCKER_ID = SynchedEntityData.defineId(EnemyEntity.class, EntityDataSerializers.INT);
 
     private static final RawAnimation MOVE_ANIM = RawAnimation.begin().thenLoop("move");
     private static final RawAnimation IDLE_ANIM = RawAnimation.begin().thenLoop("idle");
@@ -46,9 +46,11 @@ public class EnemyEntity extends Mob implements GeoEntity {
     private static final String KEY_GATE = "Gate";
     private static final String KEY_PATH = "Path";
 
+    /** 到路径点的到达判定半径；会话侧到蓝门的判定见 BattleSession#GATE_ARRIVAL_RADIUS（0.75）。 */
     public static final double ARRIVE_RADIUS = 0.25;
     private static final double MAX_Y_STEP = 0.25;
     private static final int ATTACK_ANIM_TICKS = 10;
+    private static final int STUCK_LOG_TICKS = 200;
 
     private final AnimatableInstanceCache animatableCache = GeckoLibUtil.createInstanceCache(this);
     private final List<BlockPos> path = new ArrayList<>();
@@ -57,6 +59,9 @@ public class EnemyEntity extends Mob implements GeoEntity {
     private int waypointIndex;
     private int attackCooldown;
     private int attackAnimTicks;
+    private double lastProgressX;
+    private double lastProgressZ;
+    private int stuckTicks;
     @Nullable
     private OperatorEntity blocker;
     @Nullable
@@ -75,7 +80,6 @@ public class EnemyEntity extends Mob implements GeoEntity {
         super.defineSynchedData(builder);
         builder.define(DATA_DEF_ID, Definitions.ENEMY_CRAWLER.id());
         builder.define(DATA_ANIM_STATE, EnemyAnimState.MOVE.ordinal());
-        builder.define(DATA_BLOCKER_ID, -1);
     }
 
     public String getDefId() {
@@ -110,10 +114,6 @@ public class EnemyEntity extends Mob implements GeoEntity {
         return this.definition().attackDamage();
     }
 
-    public int getBlockerId() {
-        return this.entityData.get(DATA_BLOCKER_ID);
-    }
-
     @Nullable
     public OperatorEntity getBlocker() {
         return this.blocker;
@@ -121,7 +121,6 @@ public class EnemyEntity extends Mob implements GeoEntity {
 
     public void setBlocker(@Nullable OperatorEntity blocker) {
         this.blocker = blocker;
-        this.entityData.set(DATA_BLOCKER_ID, blocker == null ? -1 : blocker.getId());
     }
 
     /** 由关卡会话在生成后调用，注入路径与终点。 */
@@ -145,6 +144,7 @@ public class EnemyEntity extends Mob implements GeoEntity {
     public void afterAttack() {
         this.attackCooldown = this.definition().attackIntervalTicks();
         this.attackAnimTicks = ATTACK_ANIM_TICKS;
+        this.triggerAnim("main", "attack");
     }
 
     private void updateHpTag() {
@@ -152,7 +152,8 @@ public class EnemyEntity extends Mob implements GeoEntity {
             this.setCustomNameVisible(false);
             return;
         }
-        this.setCustomName(Component.literal("HP " + (int) Math.ceil(this.getHealth()) + "/" + (int) this.definition().maxHp()));
+        this.setCustomName(Component.translatable("msg.annihilation_protocol.hp_tag",
+                (int) Math.ceil(this.getHealth()), (int) this.definition().maxHp()));
         this.setCustomNameVisible(true);
     }
 
@@ -189,6 +190,7 @@ public class EnemyEntity extends Mob implements GeoEntity {
 
         this.setAnimState(this.attackAnimTicks > 0 ? EnemyAnimState.ATTACK : EnemyAnimState.MOVE);
         this.moveAlongPath();
+        this.trackProgress();
     }
 
     private void moveAlongPath() {
@@ -210,6 +212,21 @@ public class EnemyEntity extends Mob implements GeoEntity {
         this.move(MoverType.SELF, new Vec3(dx / distXZ * step, dy, dz / distXZ * step));
         this.setDeltaMovement(Vec3.ZERO);
         this.faceTowards(target.getX() + 0.5, target.getZ() + 0.5);
+    }
+
+    /** 卡住检测：路径被方块堵住时不会自动绕路（规划要求固定路径优先），只记录日志便于排查。 */
+    private void trackProgress() {
+        double moved = Math.hypot(this.getX() - this.lastProgressX, this.getZ() - this.lastProgressZ);
+        this.lastProgressX = this.getX();
+        this.lastProgressZ = this.getZ();
+        if (moved >= 0.005) {
+            this.stuckTicks = 0;
+            return;
+        }
+        this.stuckTicks++;
+        if (Config.debugLogging && this.stuckTicks % STUCK_LOG_TICKS == 0) {
+            AnnihilationProtocolMod.LOGGER.info("[AP] 敌人 {} 已卡住 {} tick：检查路径上是否有方块", this.getUUID(), this.stuckTicks);
+        }
     }
 
     private void faceTowards(double x, double z) {

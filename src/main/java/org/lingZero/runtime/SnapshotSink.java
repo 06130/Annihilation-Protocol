@@ -1,5 +1,6 @@
 package org.lingZero.runtime;
 
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 
 /**
@@ -8,7 +9,7 @@ import net.minecraft.server.level.ServerPlayer;
 public interface SnapshotSink {
     SnapshotSink NOOP = new SnapshotSink() {
         @Override
-        public void broadcast(Snapshot snapshot) {
+        public void broadcast(ServerLevel level, Snapshot snapshot) {
         }
 
         @Override
@@ -16,7 +17,8 @@ public interface SnapshotSink {
         }
     };
 
-    void broadcast(Snapshot snapshot);
+    /** 只广播给该维度的玩家（每个维度各有一个会话）。 */
+    void broadcast(ServerLevel level, Snapshot snapshot);
 
     void sendTo(ServerPlayer player, Snapshot snapshot);
 }

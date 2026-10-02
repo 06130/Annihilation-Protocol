@@ -1,7 +1,10 @@
 package org.lingZero.runtime;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import javax.annotation.Nullable;
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.EntitySelector;
 import org.lingZero.entity.EnemyEntity;
@@ -18,7 +21,7 @@ public final class BlockingSystem {
     }
 
     public static void pass(BattleSession session) {
-        for (EnemyEntity enemy : session.loadedEnemies()) {
+        for (EnemyEntity enemy : prioritized(session)) {
             OperatorEntity blocker = enemy.getBlocker();
             if (blocker != null) {
                 if (shouldRelease(blocker, enemy)) {
@@ -34,6 +37,22 @@ public final class BlockingSystem {
         for (OperatorEntity operator : session.loadedOperators()) {
             operator.blockedEnemies().removeIf(enemy -> !enemy.isAlive() || enemy.isRemoved() || enemy.getBlocker() != operator);
         }
+    }
+
+    /**
+     * 抢占同一干员时按"离蓝门更近者优先"处理，避免结果依赖 UUID 哈希顺序（跨存档/重启会变）。
+     */
+    private static List<EnemyEntity> prioritized(BattleSession session) {
+        List<EnemyEntity> enemies = new ArrayList<>(session.loadedEnemies());
+        BlockPos gate = session.definition().gatePos();
+        if (gate != null) {
+            double gateX = gate.getX() + 0.5;
+            double gateZ = gate.getZ() + 0.5;
+            enemies.sort(Comparator.comparingDouble(
+                            (EnemyEntity enemy) -> enemy.distanceToSqr(gateX, enemy.getY(), gateZ))
+                    .thenComparing(enemy -> enemy.getUUID().toString()));
+        }
+        return enemies;
     }
 
     private static boolean shouldRelease(OperatorEntity blocker, EnemyEntity enemy) {

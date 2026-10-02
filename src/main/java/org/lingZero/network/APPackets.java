@@ -45,7 +45,7 @@ public final class APPackets implements SnapshotSink {
         if (Config.debugLogging) {
             AnnihilationProtocolMod.LOGGER.info("[AP] 部署请求 {} @ {} -> {}", operatorId, pos, result);
         }
-        sendDeployResult(player, result, pos);
+        sendDeployResult(player, result);
         BattleSession session = SessionManager.get(level);
         if (session != null) {
             session.sendSnapshotTo(player);
@@ -53,25 +53,31 @@ public final class APPackets implements SnapshotSink {
     }
 
     @RPCPacket(APChannels.DEPLOY_RESULT)
-    public static void onDeployResult(RPCSender sender, DeployResult result, BlockPos pos) {
+    public static void onDeployResult(RPCSender sender, DeployResult result) {
         if (FMLEnvironment.dist.isClient()) {
-            ClientBattleState.onDeployResult(result, pos);
+            ClientBattleState.onDeployResult(result);
         }
     }
 
     @Override
-    public void broadcast(Snapshot snapshot) {
-        RPCPacketDistributor.rpcToAllPlayers(APChannels.BATTLE_SNAPSHOT,
-                snapshot.state(), snapshot.gateHp(), snapshot.gateMaxHp(), snapshot.remaining(), snapshot.alive());
+    public void broadcast(ServerLevel level, Snapshot snapshot) {
+        // 每个维度各有自己的会话，只发给该维度的玩家，避免看到别的维度的关卡状态
+        for (ServerPlayer player : level.players()) {
+            rpcTo(player, snapshot);
+        }
     }
 
     @Override
     public void sendTo(ServerPlayer player, Snapshot snapshot) {
+        rpcTo(player, snapshot);
+    }
+
+    private static void rpcTo(ServerPlayer player, Snapshot snapshot) {
         RPCPacketDistributor.rpcToPlayer(player, APChannels.BATTLE_SNAPSHOT,
                 snapshot.state(), snapshot.gateHp(), snapshot.gateMaxHp(), snapshot.remaining(), snapshot.alive());
     }
 
-    public static void sendDeployResult(ServerPlayer player, DeployResult result, BlockPos pos) {
-        RPCPacketDistributor.rpcToPlayer(player, APChannels.DEPLOY_RESULT, result, pos);
+    public static void sendDeployResult(ServerPlayer player, DeployResult result) {
+        RPCPacketDistributor.rpcToPlayer(player, APChannels.DEPLOY_RESULT, result);
     }
 }

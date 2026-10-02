@@ -6,6 +6,7 @@ import net.minecraft.server.level.ServerPlayer;
 import javax.annotation.Nullable;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import org.lingZero.AnnihilationProtocolMod;
 import org.lingZero.Config;
 import org.lingZero.battle.DeployResult;
 import org.lingZero.battle.LevelDefinition;
@@ -18,8 +19,6 @@ import org.lingZero.registry.ModEntities;
  * 部署校验与生成。所有入口（命令、物品网络请求）都必须经过这里。
  */
 public final class DeployService {
-    public static final double MAX_DEPLOY_DISTANCE = 8.0;
-
     private DeployService() {
     }
 
@@ -41,7 +40,8 @@ public final class DeployService {
         if (!definition.isConfigured()) {
             return DeployResult.NOT_CONFIGURED;
         }
-        if (player != null && player.distanceToSqr(Vec3.atCenterOf(pos)) > MAX_DEPLOY_DISTANCE * MAX_DEPLOY_DISTANCE) {
+        double maxDistance = Config.maxDeployDistance;
+        if (player != null && player.distanceToSqr(Vec3.atCenterOf(pos)) > maxDistance * maxDistance) {
             return DeployResult.TOO_FAR;
         }
         if (!definition.areaContains(pos)) {
@@ -65,14 +65,16 @@ public final class DeployService {
         }
         OperatorEntity operator = ModEntities.OPERATOR_GUARD.get().create(level);
         if (operator == null) {
-            return DeployResult.NO_SESSION;
+            AnnihilationProtocolMod.LOGGER.error("[AP] 干员实体创建失败：{}", operatorDefinition.id());
+            return DeployResult.SERVER_ERROR;
         }
         operator.setDefId(operatorDefinition.id());
         float yRot = player != null ? player.getYRot() + 180.0F : 0.0F;
         operator.moveTo(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5, yRot, 0.0F);
         operator.applyDefinition();
         if (!level.addFreshEntity(operator)) {
-            return DeployResult.OCCUPIED;
+            AnnihilationProtocolMod.LOGGER.error("[AP] 干员实体加入世界失败：{} @ {}", operatorDefinition.id(), pos);
+            return DeployResult.SERVER_ERROR;
         }
         session.trackOperator(operator);
         if (player != null) {

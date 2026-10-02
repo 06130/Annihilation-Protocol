@@ -8,7 +8,6 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.IntArrayTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
-import net.minecraft.world.phys.AABB;
 
 /**
  * 关卡配置：红门、蓝门、可部署区域、固定路径点、生成队列。
@@ -20,7 +19,6 @@ public class LevelDefinition {
     private static final String KEY_AREA_MIN = "areaMin";
     private static final String KEY_AREA_MAX = "areaMax";
     private static final String KEY_PATH = "path";
-    private static final String KEY_QUEUE = "spawnQueue";
     /** 路径阻挡半径：方块中心与路径段的 XZ 距离小于该值即视为在路径上。 */
     public static final double PATH_RADIUS = 0.5;
 
@@ -33,7 +31,6 @@ public class LevelDefinition {
     @Nullable
     private BlockPos areaMax;
     private final List<BlockPos> path = new ArrayList<>();
-    private final List<SpawnEntry> spawnQueue = new ArrayList<>();
 
     @Nullable
     public BlockPos spawnPos() {
@@ -70,15 +67,6 @@ public class LevelDefinition {
         path.clear();
     }
 
-    public List<SpawnEntry> spawnQueue() {
-        return List.copyOf(spawnQueue);
-    }
-
-    public void setSpawnQueue(List<SpawnEntry> entries) {
-        spawnQueue.clear();
-        spawnQueue.addAll(entries);
-    }
-
     /** 配置缺失项，用于 /ap start 的失败提示。 */
     public List<String> missingSetup() {
         List<String> missing = new ArrayList<>();
@@ -105,19 +93,6 @@ public class LevelDefinition {
         return pos.getX() >= areaMin.getX() && pos.getX() <= areaMax.getX()
                 && pos.getY() >= areaMin.getY() && pos.getY() <= areaMax.getY()
                 && pos.getZ() >= areaMin.getZ() && pos.getZ() <= areaMax.getZ();
-    }
-
-    public AABB battleBox() {
-        BlockPos min = areaMin;
-        BlockPos max = areaMax;
-        if (min == null || max == null) {
-            BlockPos center = spawnPos != null ? spawnPos : gatePos;
-            if (center == null) {
-                return new AABB(0, 0, 0, 1, 1, 1);
-            }
-            return new AABB(center).inflate(16.0);
-        }
-        return new AABB(min.getX(), min.getY(), min.getZ(), max.getX() + 1.0, max.getY() + 1.0, max.getZ() + 1.0);
     }
 
     /** 路径段列表（红门 -> 路径点 -> 蓝门），用于部署判定与调试。 */
@@ -150,10 +125,6 @@ public class LevelDefinition {
         return false;
     }
 
-    public boolean isDeployable(BlockPos pos) {
-        return areaContains(pos) && !isOnPath(pos);
-    }
-
     static double distanceToSegmentXZ(double px, double pz, double ax, double az, double bx, double bz) {
         double dx = bx - ax;
         double dz = bz - az;
@@ -183,11 +154,6 @@ public class LevelDefinition {
             pathTag.add(writePos(pos));
         }
         tag.put(KEY_PATH, pathTag);
-        ListTag queueTag = new ListTag();
-        for (SpawnEntry entry : spawnQueue) {
-            queueTag.add(entry.save());
-        }
-        tag.put(KEY_QUEUE, queueTag);
         return tag;
     }
 
@@ -203,10 +169,6 @@ public class LevelDefinition {
             if (pos != null) {
                 definition.path.add(pos);
             }
-        }
-        ListTag queueTag = tag.getList(KEY_QUEUE, Tag.TAG_COMPOUND);
-        for (int i = 0; i < queueTag.size(); i++) {
-            definition.spawnQueue.add(SpawnEntry.load(queueTag.getCompound(i)));
         }
         return definition;
     }

@@ -15,14 +15,15 @@ NeoForge 1.21.1 类《明日方舟》塔防 Mod。当前状态：**MVP 已实现
 org.lingZero
 ├─ AnnihilationProtocolMod   @Mod 入口：注册表 + Config + NetworkBridge.init()
 ├─ Config                    COMMON 配置（gateMaxHp/defaultEnemyCount/maxOperators/deployCooldownTicks/...）
-├─ battle/    纯领域层：LevelState、LevelDefinition(路径/区域/生成队列+NBT)、BattleRules、SpawnEntry、
+├─ battle/    纯领域层：LevelState、LevelDefinition(路径/区域+NBT)、BattleRules、SpawnQueue、
 │             DeployResult、Selftest。只依赖 net.minecraft.*，禁止依赖 runtime/network/entity/渲染
-├─ runtime/   服务端权威运行时：BattleSession(状态机/计数/生成队列)、SessionManager(按维度持有会话)、
+├─ runtime/   服务端权威运行时：BattleSession(状态机/计数/驱动生成队列)、SessionManager(按维度持有会话)、
 │             LevelRuntimeData(SavedData 持久化)、BlockingSystem、CombatSystem、DeployService、
 │             Snapshot/SnapshotSink/SnapshotBroadcaster、SessionEvents(事件入口)
 ├─ entity/    EnemyEntity、OperatorEntity（Mob + GeckoLib GeoEntity）、Definitions/EnemyDefinition/OperatorDefinition
-├─ network/   APChannels、APPackets(LDLib2 @RPCPacket 端点)、APClient、NetworkBridge —— 唯一的网络桥
-├─ client/    ClientBattleState(客户端只读缓存+action bar 反馈)、ClientSetup(渲染器注册)、render/*
+├─ network/   APChannels、APPackets(LDLib2 @RPCPacket 端点)、NetworkBridge —— 唯一的网络桥
+├─ client/    ClientBattleState(客户端只读缓存+action bar 反馈)、ClientDeployRequest(C2S 部署请求)、
+│             ClientSetup(渲染器注册)、render/*
 ├─ registry/  ModEntities / ModItems / ModRegistries
 ├─ item/      OperatorDeployerItem（右键发 C2S 部署请求，不在客户端生成实体）
 └─ command/   AnnihilationCommand（/ap 命令树，别名 /annihilation）
@@ -31,7 +32,7 @@ org.lingZero
 **分层不变量（新增功能必须遵守）**
 
 1. `battle` 不依赖任何其他自有包（除 MC 类）；规则/判定放这里，便于 `/ap selftest` 覆盖。
-2. `runtime` **禁止 import LDLib2 或 GeckoLib**。它对外的出口只有两个接口：
+2. `runtime` **禁止 import LDLib2 或 GeckoLib**（攻击/动画演出由实体自己的 `afterAttack()` 触发）。它对外的出口只有两个接口：
    - `SnapshotSink`（由 `network.NetworkBridge` 注入 `APPackets` 实现）负责把快照广播出去；
    - `SessionEvents` 监听游戏事件驱动 tick。
 3. `network` 是唯一同时接触 `runtime` 与 `client` 的包；客户端的任何行为都从 `ClientBattleState` 读取。
@@ -41,8 +42,12 @@ org.lingZero
    保证专用服务器不加载客户端类（已验证 `runServer` 可正常启动）。
 
 **数据流**：命令/物品 RPC → `DeployService`/`BattleSession` → `ServerTickEvent.Post` 驱动
-`BattleSession.tick()`（生成队列 → 门到达判定 → `BlockingSystem`(每 5 tick) → `CombatSystem` → 胜负判定）
+`BattleSession.tick()`（`SpawnQueue.tickPop()` → 门到达判定 → `BlockingSystem`(每 5 tick) → `CombatSystem` → 胜负判定）
 → 实体用原版 `SynchedEntityData` + GeckoLib `triggerAnim` 表现 → `SnapshotBroadcaster` → LDLib2 RPC → `ClientBattleState`。
+
+**计数语义（P1-1 的教训，改动前必读）**：`LevelRuntimeData.remaining` 是"本局尚未结算的敌人总数"，
+`start()` 时就预置为整局总数、`queueSpawn()` 追加时同步增加，`spawnEnemy()` **只增 `alive`**。
+若改成"生成时才累加 remaining"，带间隔的生成队列会在中途被判胜（`/ap start 3 200` 即可复现）。
 
 ## 框架使用约定
 
@@ -69,7 +74,8 @@ org.lingZero
   `Accessor for type ... is not a ManagedAccessor`）。需要传列表时用字符串编码或分多次发送。
 - 处理器在主线程执行（NeoForge `PayloadRegistrar` 默认 `HandlerThread.MAIN`），可直接操作世界与实体。
 - 用 `RPCSender#isServer()` 判断来源，`asPlayer()` 拿发信玩家（客户端→服务端时非空）。
-- 现有 3 个端点见 `network/APChannels`：`battle_snapshot`(S2C 标量快照)、`deploy_request`(C2S)、`deploy_result`(S2C)。
+- 客户端发请求的唯一出口是 `client/ClientDeployRequest`（不要在 `network` 包放客户端类）。
+- 现有 3 个端点（见 `network/APChannels`）：`battle_snapshot(state,gateHp,gateMaxHp,remaining,alive)`（S2C，**按维度**只发给 `level.players()`）、`deploy_request(pos,operatorId)`（C2S）、`deploy_result(result)`（S2C）。
 - **不要**用 LDLib2 的 `@DescSynced/@Persisted/@RPCMethod`：那套声明式同步仅对 BlockEntity 提供 holder
   （`syncdata/holder/blockentity/*`，只发给 tracking chunk 的玩家）。关卡状态是全球性的，因此走
   `SavedData`(持久化) + RPC 广播(同步)，这也是当前架构的既有决定，改动前先讨论。
@@ -87,16 +93,22 @@ org.lingZero
 `/ap status`、`/ap start [count] [interval]`、`/ap reset`、`/ap spawn <count>`、
 `/ap deploy <operatorId> [pos]`、`/ap config setspawn|setgate|setarea`、`/ap path add|clear|list`、`/ap selftest`。
 权限等级 2；`/ap deploy` 与 `config`/`path` 均可从控制台执行（`DeployService` 的 player 参数可为 null，
-为 null 时跳过距离/冷却校验）。所有玩家可见文案走 lang 键 `msg.annihilation_protocol.*`，禁止在 Java 里硬编码中文用户文案。
+为 null 时跳过距离/冷却校验）。`/ap spawn` 是按当前间隔入队（不是全部立即出现）。
+所有玩家可见文案走 lang 键 `msg.annihilation_protocol.*`（含血条名字牌 `hp_tag`），禁止在 Java 里硬编码中文用户文案；
+**例外**：`battle/Selftest` 的失败原因是开发者诊断输出，允许保留中文字面量。
 
 ## 编码约定
 
 - 标识符英文、注释中文；用户可见文本全部用 `Component.translatable` + `assets/annihilation_protocol/lang/{en_us,zh_cn}.json`。
-- 数值调整位置：玩法参数 → `Config`；单位数值（血量/攻击/间隔/阻挡占用） → `entity/Definitions`。
+- 数值调整位置：玩法参数 → `Config`（含 `maxDeployDistance`）；单位数值（血量/攻击/间隔/阻挡占用） → `entity/Definitions`。
+- `Config` 只监听 `ModConfigEvent.Loading`/`Reloading`（不要退回基类 `ModConfigEvent`，它含 Unloading，`get()` 会抛异常）。
 - `build.gradle` 里已加 `options.encoding = 'UTF-8'`：源码含中文，**不要删掉**，否则 Windows 默认 GBK 会乱码。
 - 修改关卡状态结构时，同步更新 `LevelRuntimeData` 的 NBT 读写与 `LevelDefinition`；
   `BattleSession.onLoaded()` 负责"重启后 RUNNING→IDLE + 清理残留实体"（残留清理有 200 tick 的窗口，
   因为实体随区块陆续载入；只清理不在追踪表里的己方实体）。
+- `LevelRuntimeData` **只持久化** definition / state / gateMaxHp；gateHp、remaining、alive 每局由
+  `start()`/`reset()` 重算、`onLoaded()` 归零，不要重新写盘（纯写放大）。
+- `SessionManager.ensureSession()` 首次调用有副作用（载入持久化数据 + 执行 `onLoaded()`），只读命令也依赖它。
 
 ## 构建与运行
 
@@ -125,11 +137,13 @@ $env:GRADLE_RO_DEP_CACHE='G:\.gradle\caches'
 
 ## 验证手段（无玩家也能测的部分）
 
-- **纯逻辑**：`/ap selftest` 会跑 `battle.Selftest` 的断言并输出 `n/N passed`（当前 17/17）。
+- **纯逻辑**：`/ap selftest` 会跑 `battle.Selftest` 的断言并输出 `n/N passed`（当前 25/25，含 SpawnQueue 与"未结算敌人不得判胜"）。
 - **端到端（无头）**：`run/eula.txt` + `run/server.properties` 里开 RCON
   （`enable-rcon=true`、`rcon.port=25575`、`rcon.password=...`）后，可用 PowerShell 的 TCP/RCON
   发命令验证：配置 → `/ap start` → `/ap status` / `/data get entity @e[type=annihilation_protocol:...] ...`
   观察移动、阻挡、血量、胜负、重置。RCON 协议：长度(int LE)+id+type+payload+空终止符，type 3=登录、2=命令。
+- **必测的胜负回归用例**：`/ap deploy operator_guard <路径旁> ; /ap start 3 200` → 首杀后必须仍是
+  `Running + Remaining 2`，全部结算后才 `Victory`（这是 P1-1 的复现/回归用例）。
 - **关键坑**：无玩家在线时区块不一定 entity-ticking，**实体完全不 tick**（表现为敌人/僵尸原地不动）。
   测试前必须 `/forceload add <from> [to]`，测完 `/forceload remove all`。
 - **测不了、必须用户在客户端验证**：GeckoLib 模型/动画/贴图、action bar 反馈、物品右键→RPC 部署往返、多人可见性。
@@ -140,8 +154,17 @@ $env:GRADLE_RO_DEP_CACHE='G:\.gradle\caches'
 - 每个维度只有一个关卡会话；重启会把 RUNNING 降级为 IDLE 并清理实体，不恢复进行中的战斗。
 - 敌人与干员无费用/波次/技能/远程/医疗；战斗仅近战 1:1，远程与格子范围未做。
 - 到达蓝门的敌人不参与清除战斗；失败时不清场残留敌人（`/ap reset` 清理）。
+- **路径被方块堵住时敌人不会绕路也不会结束本局**（固定路径优先），只有 `debugLogging=true` 下的
+  "已卡住 N tick" 日志；需要人工清路或 `/ap reset`。
+- 同一干员被多个敌人抢占时，规则是**离蓝门更近的敌人优先**（`BlockingSystem.prioritized`）；改名/改规则要同步这里。
+- 相机以外：快照按维度广播，玩家不会看到别的维度的关卡状态（`SnapshotSink.broadcast(ServerLevel, ...)`）。
+- 已在 MVP 提前落地（规划列为可延后）：带间隔的生成队列、GeckoLib 手写占位资产（代价见 P1-1 与占位模型说明）。
 - 关卡配置为逻辑坐标（无专属方块/方块实体）；`isOnPath` 只按 XZ 距离判定 0.5 格。
 - GeckoLib 资产是占位模型；占位贴图为纯色。
+- 敌人的"逻辑状态"目前由表现枚举 `EnemyAnimState` 兼任（`serverTick` 用早退表达"被阻挡"），
+  规划 §6.3 的"到达蓝门/死亡"只存在于会话侧；**加技能/远程前建议先收拢成显式状态机**。
+- `BattleSession` 仍同时管追踪表/胜负/快照节流/残留清理（生成队列已抽成 `battle/SpawnQueue`）；
+  写 UI 之前建议继续拆分追踪表。
 
 ## LDLib2 开发参考
 

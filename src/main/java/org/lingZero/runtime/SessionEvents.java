@@ -29,7 +29,7 @@ public final class SessionEvents {
     @SubscribeEvent
     public static void onLevelLoad(LevelEvent.Load event) {
         if (event.getLevel() instanceof ServerLevel level) {
-            SessionManager.getOrCreate(level);
+            SessionManager.ensureSession(level);
         }
     }
 

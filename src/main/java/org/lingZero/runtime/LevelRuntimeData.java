@@ -14,10 +14,7 @@ public class LevelRuntimeData extends SavedData {
 
     private static final String KEY_DEFINITION = "definition";
     private static final String KEY_STATE = "state";
-    private static final String KEY_GATE_HP = "gateHp";
     private static final String KEY_GATE_MAX_HP = "gateMaxHp";
-    private static final String KEY_REMAINING = "remaining";
-    private static final String KEY_ALIVE = "alive";
 
     private LevelDefinition definition = new LevelDefinition();
     private LevelState state = LevelState.IDLE;
@@ -72,12 +69,10 @@ public class LevelRuntimeData extends SavedData {
 
     @Override
     public CompoundTag save(CompoundTag tag, HolderLookup.Provider registries) {
+        // gateHp/remaining/alive 每局由 start()/reset() 重算、onLoaded() 归零，写盘只是放大，故不持久化。
         tag.put(KEY_DEFINITION, definition.save());
         tag.putString(KEY_STATE, state.name());
-        tag.putInt(KEY_GATE_HP, gateHp);
         tag.putInt(KEY_GATE_MAX_HP, gateMaxHp);
-        tag.putInt(KEY_REMAINING, remaining);
-        tag.putInt(KEY_ALIVE, alive);
         return tag;
     }
 
@@ -87,10 +82,7 @@ public class LevelRuntimeData extends SavedData {
             data.definition = LevelDefinition.load(tag.getCompound(KEY_DEFINITION));
         }
         data.state = parseState(tag.getString(KEY_STATE));
-        data.gateHp = Math.max(0, tag.getInt(KEY_GATE_HP));
         data.gateMaxHp = Math.max(1, tag.getInt(KEY_GATE_MAX_HP));
-        data.remaining = Math.max(0, tag.getInt(KEY_REMAINING));
-        data.alive = Math.max(0, tag.getInt(KEY_ALIVE));
         return data;
     }
 

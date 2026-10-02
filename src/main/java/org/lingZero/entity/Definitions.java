@@ -3,6 +3,8 @@ package org.lingZero.entity;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Optional;
+import org.lingZero.AnnihilationProtocolMod;
+import org.lingZero.Config;
 
 /**
  * 类型定义表，客户端与服务端共用，命令补全与网络请求都从这里取。
@@ -22,7 +24,14 @@ public final class Definitions {
     }
 
     public static EnemyDefinition enemyOrFallback(String id) {
-        return ENEMIES.getOrDefault(id, ENEMY_CRAWLER);
+        EnemyDefinition definition = ENEMIES.get(id);
+        if (definition == null) {
+            if (Config.debugLogging) {
+                AnnihilationProtocolMod.LOGGER.warn("[AP] 未知敌人类型 {}，回退为 {}", id, ENEMY_CRAWLER.id());
+            }
+            return ENEMY_CRAWLER;
+        }
+        return definition;
     }
 
     public static Optional<OperatorDefinition> operator(String id) {

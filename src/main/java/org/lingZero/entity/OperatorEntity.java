@@ -114,12 +114,31 @@ public class OperatorEntity extends Mob implements GeoEntity {
         this.blockedEnemies.clear();
     }
 
+    private void updateHpTag() {
+        if (!Config.showHpNameTag) {
+            this.setCustomNameVisible(false);
+            return;
+        }
+        this.setCustomName(Component.translatable("msg.annihilation_protocol.hp_tag",
+                (int) Math.ceil(this.getHealth()), (int) this.definition().maxHp()));
+        this.setCustomNameVisible(true);
+    }
+
+    @Override
+    public void setHealth(float health) {
+        super.setHealth(health);
+        if (!this.level().isClientSide) {
+            this.updateHpTag();
+        }
+    }
+
     public boolean readyToAttack() {
         return this.attackCooldown <= 0;
     }
 
     public void afterAttack() {
         this.attackCooldown = this.definition().attackIntervalTicks();
+        this.triggerAnim("main", "attack");
     }
 
     @Override

@@ -12,7 +12,11 @@ public final class SessionManager {
     private SessionManager() {
     }
 
-    public static BattleSession getOrCreate(ServerLevel level) {
+    /**
+     * 取得维度会话；**首次调用有副作用**：载入持久化数据并执行 BattleSession#onLoaded
+     * （丢弃不属于本会话的己方残留实体、把 RUNNING 降级为 IDLE）。之后只是返回缓存。
+     */
+    public static BattleSession ensureSession(ServerLevel level) {
         BattleSession session = SESSIONS.get(level);
         if (session == null) {
             LevelRuntimeData data = level.getDataStorage().computeIfAbsent(LevelRuntimeData.factory(), LevelRuntimeData.FILE_ID);

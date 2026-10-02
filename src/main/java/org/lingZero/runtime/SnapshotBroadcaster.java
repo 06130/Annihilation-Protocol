@@ -1,5 +1,6 @@
 package org.lingZero.runtime;
 
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 
 public final class SnapshotBroadcaster {
@@ -12,8 +13,8 @@ public final class SnapshotBroadcaster {
         sink = newSink;
     }
 
-    public static void broadcast(Snapshot snapshot) {
-        sink.broadcast(snapshot);
+    public static void broadcast(ServerLevel level, Snapshot snapshot) {
+        sink.broadcast(level, snapshot);
     }
 
     public static void sendTo(ServerPlayer player, Snapshot snapshot) {

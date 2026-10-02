@@ -1,7 +1,6 @@
 package org.lingZero.client;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Player;
 import net.neoforged.api.distmarker.Dist;
@@ -42,7 +41,7 @@ public final class ClientBattleState {
         }
     }
 
-    public static void onDeployResult(DeployResult result, BlockPos pos) {
+    public static void onDeployResult(DeployResult result) {
         message(Component.translatable("msg.annihilation_protocol.deploy." + result.name()));
     }
 
@@ -71,9 +70,5 @@ public final class ClientBattleState {
 
     public static int alive() {
         return alive;
-    }
-
-    public static boolean hasData() {
-        return received;
     }
 }

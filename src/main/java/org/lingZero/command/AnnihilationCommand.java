@@ -95,7 +95,7 @@ public final class AnnihilationCommand {
 
     private static int status(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
-        BattleSession session = SessionManager.getOrCreate(source.getLevel());
+        BattleSession session = SessionManager.ensureSession(source.getLevel());
         LevelDefinition definition = session.definition();
         source.sendSuccess(() -> Component.translatable("msg.annihilation_protocol.status",
                 Component.translatable(stateKey(session.state())),
@@ -109,7 +109,7 @@ public final class AnnihilationCommand {
 
     private static int start(CommandContext<CommandSourceStack> ctx, int count, int interval) {
         CommandSourceStack source = ctx.getSource();
-        BattleSession session = SessionManager.getOrCreate(source.getLevel());
+        BattleSession session = SessionManager.ensureSession(source.getLevel());
         if (!session.state().canStart()) {
             source.sendFailure(Component.translatable("msg.annihilation_protocol.error.already_running"));
             return 0;
@@ -126,7 +126,7 @@ public final class AnnihilationCommand {
 
     private static int reset(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack source = ctx.getSource();
-        BattleSession session = SessionManager.getOrCreate(source.getLevel());
+        BattleSession session = SessionManager.ensureSession(source.getLevel());
         session.reset();
         source.sendSuccess(() -> Component.translatable("msg.annihilation_protocol.reset"), true);
         return 1;
@@ -134,7 +134,7 @@ public final class AnnihilationCommand {
 
     private static int spawn(CommandContext<CommandSourceStack> ctx, int count) {
         CommandSourceStack source = ctx.getSource();
-        BattleSession session = SessionManager.getOrCreate(source.getLevel());
+        BattleSession session = SessionManager.ensureSession(source.getLevel());
         if (session.state() != LevelState.RUNNING) {
             source.sendFailure(Component.translatable("msg.annihilation_protocol.error.not_running"));
             return 0;
@@ -144,7 +144,7 @@ public final class AnnihilationCommand {
                     String.join(", ", session.definition().missingSetup())));
             return 0;
         }
-        session.spawnNow(count);
+        session.queueSpawn(count);
         source.sendSuccess(() -> Component.translatable("msg.annihilation_protocol.spawned", count), true);
         return 1;
     }
@@ -165,7 +165,7 @@ public final class AnnihilationCommand {
 
     private static int setSpawn(CommandContext<CommandSourceStack> ctx) {
         BlockPos pos = BlockPosArgument.getBlockPos(ctx, "pos");
-        BattleSession session = SessionManager.getOrCreate(ctx.getSource().getLevel());
+        BattleSession session = SessionManager.ensureSession(ctx.getSource().getLevel());
         session.definition().setSpawnPos(pos);
         session.markDirty();
         ctx.getSource().sendSuccess(() -> Component.translatable("msg.annihilation_protocol.configured.spawn", describe(pos)), true);
@@ -174,7 +174,7 @@ public final class AnnihilationCommand {
 
     private static int setGate(CommandContext<CommandSourceStack> ctx) {
         BlockPos pos = BlockPosArgument.getBlockPos(ctx, "pos");
-        BattleSession session = SessionManager.getOrCreate(ctx.getSource().getLevel());
+        BattleSession session = SessionManager.ensureSession(ctx.getSource().getLevel());
         session.definition().setGatePos(pos);
         session.markDirty();
         ctx.getSource().sendSuccess(() -> Component.translatable("msg.annihilation_protocol.configured.gate", describe(pos)), true);
@@ -184,7 +184,7 @@ public final class AnnihilationCommand {
     private static int setArea(CommandContext<CommandSourceStack> ctx) {
         BlockPos from = BlockPosArgument.getBlockPos(ctx, "from");
         BlockPos to = BlockPosArgument.getBlockPos(ctx, "to");
-        BattleSession session = SessionManager.getOrCreate(ctx.getSource().getLevel());
+        BattleSession session = SessionManager.ensureSession(ctx.getSource().getLevel());
         session.definition().setArea(from, to);
         session.markDirty();
         ctx.getSource().sendSuccess(() -> Component.translatable("msg.annihilation_protocol.configured.area", describe(from), describe(to)), true);
@@ -193,7 +193,7 @@ public final class AnnihilationCommand {
 
     private static int addPathPoint(CommandContext<CommandSourceStack> ctx) {
         BlockPos pos = BlockPosArgument.getBlockPos(ctx, "pos");
-        BattleSession session = SessionManager.getOrCreate(ctx.getSource().getLevel());
+        BattleSession session = SessionManager.ensureSession(ctx.getSource().getLevel());
         session.definition().addPathPoint(pos);
         session.markDirty();
         ctx.getSource().sendSuccess(() -> Component.translatable("msg.annihilation_protocol.configured.path_added", describe(pos),
@@ -202,7 +202,7 @@ public final class AnnihilationCommand {
     }
 
     private static int clearPath(CommandContext<CommandSourceStack> ctx) {
-        BattleSession session = SessionManager.getOrCreate(ctx.getSource().getLevel());
+        BattleSession session = SessionManager.ensureSession(ctx.getSource().getLevel());
         session.definition().clearPath();
         session.markDirty();
         ctx.getSource().sendSuccess(() -> Component.translatable("msg.annihilation_protocol.configured.path_cleared"), true);
@@ -210,7 +210,7 @@ public final class AnnihilationCommand {
     }
 
     private static int listPath(CommandContext<CommandSourceStack> ctx) {
-        BattleSession session = SessionManager.getOrCreate(ctx.getSource().getLevel());
+        BattleSession session = SessionManager.ensureSession(ctx.getSource().getLevel());
         List<BlockPos> path = session.definition().path();
         StringBuilder builder = new StringBuilder();
         for (int i = 0; i < path.size(); i++) {

@@ -16,7 +16,7 @@ import org.lingZero.Config;
 import org.lingZero.battle.BattleRules;
 import org.lingZero.battle.LevelDefinition;
 import org.lingZero.battle.LevelState;
-import org.lingZero.battle.SpawnEntry;
+import org.lingZero.battle.SpawnQueue;
 import org.lingZero.entity.EnemyEntity;
 import org.lingZero.entity.OperatorEntity;
 import org.lingZero.registry.ModEntities;
@@ -26,6 +26,7 @@ import org.lingZero.registry.ModEntities;
  */
 public class BattleSession {
     private static final int SNAPSHOT_INTERVAL_TICKS = 5;
+    /** 到蓝门的到达判定半径；敌人侧到路径点的阈值见 EnemyEntity#ARRIVE_RADIUS（0.25）。 */
     private static final double GATE_ARRIVAL_RADIUS = 0.75;
     /** 载入后持续清理残留实体的窗口：实体随区块陆续载入，一次遍历清不干净。 */
     private static final int STALE_CLEANUP_TICKS = 200;
@@ -35,10 +36,9 @@ public class BattleSession {
     private final Map<UUID, BlockPos> trackedEnemies = new HashMap<>();
     private final Map<UUID, BlockPos> trackedOperators = new HashMap<>();
     private final Map<UUID, Long> lastDeployTicks = new HashMap<>();
-    private final List<PendingSpawn> pendingSpawns = new ArrayList<>();
+    private final SpawnQueue spawnQueue = new SpawnQueue();
     private final List<EnemyEntity> loadedEnemies = new ArrayList<>();
     private final List<OperatorEntity> loadedOperators = new ArrayList<>();
-    private int spawnInterval = 40;
     private int staleCleanupTicks;
     private int blockCheckCooldown;
     private int snapshotCooldown;
@@ -48,16 +48,6 @@ public class BattleSession {
     public BattleSession(ServerLevel level, LevelRuntimeData data) {
         this.level = level;
         this.data = data;
-    }
-
-    private static final class PendingSpawn {
-        private int delay;
-        private int count;
-
-        private PendingSpawn(int delay, int count) {
-            this.delay = delay;
-            this.count = count;
-        }
     }
 
     public ServerLevel level() {
@@ -115,7 +105,7 @@ public class BattleSession {
         discardStaleEntities();
         trackedEnemies.clear();
         trackedOperators.clear();
-        pendingSpawns.clear();
+        spawnQueue.clear();
         lastDeployTicks.clear();
         loadedEnemies.clear();
         loadedOperators.clear();
@@ -123,8 +113,8 @@ public class BattleSession {
         data.setAlive(0);
         if (data.gateMaxHp() <= 0) {
             data.setGateMaxHp(Config.gateMaxHp);
-            data.setGateHp(Config.gateMaxHp);
         }
+        data.setGateHp(data.gateMaxHp());
         if (wasRunning) {
             data.setState(LevelState.IDLE);
             if (Config.debugLogging) {
@@ -141,34 +131,33 @@ public class BattleSession {
         BlockingSystem.releaseAll(this);
         trackedEnemies.clear();
         loadedEnemies.clear();
-        this.spawnInterval = Math.max(1, interval);
-        this.pendingSpawns.clear();
-        List<SpawnEntry> entries = new ArrayList<>();
-        for (int i = 0; i < count; i++) {
-            int delay = i == 0 ? 0 : this.spawnInterval;
-            entries.add(new SpawnEntry(delay, 1));
-            this.pendingSpawns.add(new PendingSpawn(delay, 1));
-        }
-        data.definition().setSpawnQueue(entries);
+        spawnQueue.plan(count, interval);
         data.setGateMaxHp(Config.gateMaxHp);
         data.setGateHp(Config.gateMaxHp);
-        data.setRemaining(0);
+        data.setRemaining(count);
         data.setAlive(0);
         data.setState(LevelState.RUNNING);
         data.setDirty();
         flushSnapshot(true);
     }
 
-    /** /ap spawn：立即生成，仍走同一条生成队列，便于统一计数。 */
-    public void spawnNow(int count) {
-        pendingSpawns.add(new PendingSpawn(0, Math.max(1, count)));
+    /**
+     * 追加一批临时生成的敌人（/ap spawn）：按当前间隔逐个出场，
+     * 并立即计入"本局尚未结算的敌人总数"，避免生成队列未排空就被判胜。
+     */
+    public void queueSpawn(int count) {
+        int amount = Math.max(1, count);
+        spawnQueue.append(amount);
+        data.setRemaining(data.remaining() + amount);
+        data.setDirty();
     }
 
     public void reset() {
+        BlockingSystem.releaseAll(this);
         discardOwnEntities();
         trackedEnemies.clear();
         trackedOperators.clear();
-        pendingSpawns.clear();
+        spawnQueue.clear();
         lastDeployTicks.clear();
         loadedEnemies.clear();
         loadedOperators.clear();
@@ -197,7 +186,9 @@ public class BattleSession {
             flushSnapshot(false);
             return;
         }
-        processSpawnQueue();
+        if (spawnQueue.tickPop() > 0) {
+            spawnEnemy();
+        }
         checkGateArrivals();
         if (blockCheckCooldown <= 0) {
             blockCheckCooldown = Math.max(1, Config.blockCheckIntervalTicks);
@@ -239,49 +230,36 @@ public class BattleSession {
         }
     }
 
-    private void processSpawnQueue() {
-        while (!pendingSpawns.isEmpty()) {
-            PendingSpawn head = pendingSpawns.get(0);
-            if (head.delay > 0) {
-                head.delay--;
-                return;
-            }
-            if (head.count <= 0) {
-                pendingSpawns.remove(0);
-                continue;
-            }
-            spawnEnemy();
-            head.count--;
-            if (head.count > 0) {
-                head.delay = spawnInterval;
-            } else {
-                pendingSpawns.remove(0);
-            }
-            return;
-        }
-    }
-
     private void spawnEnemy() {
         LevelDefinition definition = data.definition();
         BlockPos spawnPos = definition.spawnPos();
         BlockPos gatePos = definition.gatePos();
         if (spawnPos == null || gatePos == null) {
+            onSpawnFailed();
             return;
         }
         EnemyEntity enemy = ModEntities.ENEMY_CRAWLER.get().create(level);
         if (enemy == null) {
+            onSpawnFailed();
             return;
         }
         enemy.configure(definition.path(), gatePos);
         enemy.moveTo(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5, 0.0F, 0.0F);
         if (!level.addFreshEntity(enemy)) {
-            AnnihilationProtocolMod.LOGGER.warn("[AP] 敌人生成失败于 {}", spawnPos);
+            AnnihilationProtocolMod.LOGGER.error("[AP] 敌人生成失败于 {}", spawnPos);
+            onSpawnFailed();
             return;
         }
         trackedEnemies.put(enemy.getUUID(), spawnPos);
-        data.setRemaining(data.remaining() + 1);
         data.setAlive(data.alive() + 1);
         data.setDirty();
+    }
+
+    /** 生成失败时按"丢失"结算该敌人，避免本局因为一个进不来的敌人永远无法结束。 */
+    private void onSpawnFailed() {
+        data.setRemaining(data.remaining() - 1);
+        data.setDirty();
+        checkVictory();
     }
 
     private void checkGateArrivals() {
@@ -360,6 +338,7 @@ public class BattleSession {
     }
 
     private void checkVictory() {
+        // remaining 在 start()/queueSpawn() 时已计入未出场的敌人，这里无需再看生成队列
         if (BattleRules.isVictorious(data.state(), data.remaining(), data.alive(), data.gateHp())) {
             data.setState(LevelState.VICTORY);
             flushSnapshot(true);
@@ -424,6 +403,6 @@ public class BattleSession {
         }
         lastSent = current;
         snapshotCooldown = SNAPSHOT_INTERVAL_TICKS;
-        SnapshotBroadcaster.broadcast(current);
+        SnapshotBroadcaster.broadcast(level, current);
     }
 }
